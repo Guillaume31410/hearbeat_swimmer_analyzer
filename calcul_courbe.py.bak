@@ -1,5 +1,4 @@
 import csv
-from turtle import color
 import matplotlib.pyplot as plt
 from scipy.signal import butter, filtfilt
 from datetime import datetime
@@ -73,26 +72,7 @@ def dichotomie(data1, data2):
         incr = incr+1
 
     return borne_inf
- #----------------------------------                  
-
-def tableau_derive(tableau):
-    """
-    Calcule le tableau dérivé en prenant les différences successives entre 
-    les éléments consécutifs d'un tableau donné.
-
-    :param tableau: Liste des nombres
-    :return: Liste des différences consécutives
-    """
-    if len(tableau) < 2:
-        # Un tableau avec moins de 2 éléments n'a pas de dérivée
-        return []
-
-    derive = []
-    for i in range(len(tableau) - 1):
-        derive.append(tableau[i + 1] - tableau[i])
-    
-    derive.append(0)
-    return derive 
+ #----------------------------------                   
 
 ###############################################################################
 #                            MAIN FUNCTION
@@ -101,7 +81,6 @@ def tableau_derive(tableau):
 data_raw = []
 data_time =[]
 data_measure = []
-data_derive = []
 
 with open('sample_400m.csv', mode='r', encoding='utf-8') as f:
     lecteur = csv.reader(f)
@@ -119,44 +98,25 @@ for row in data_raw:
         data_measure.append(float(row[2]))  # Convertit en float pour les mesures    
         
 #lissage de la courbe
-data_smooth = butterworth_filter(data_measure, 20, 100, order=5, filter_type='low')
+#data_smooth = lissage_courbe(data_measure, 13)
+data_smooth = butterworth_filter(data_measure, 20, 500, order=4, filter_type='low')
 
-#calcul derivee
-data_derive = tableau_derive(data_smooth)
+#calcul temps de montee (0.95% de FCmax)
+vector_95FCmax = np.ones(len(data_time))*max(data_measure)*0.95
 
-#calcul max
-x_max_derive = data_derive.index(max(data_derive))
-print("1er point d'inflexion (montee en charge) :", data_time[x_max_derive], "secondes")
+#calcul d'intersection FC / temps de montée
+intersection_point = dichotomie(data_smooth, vector_95FCmax)
 
-#calcul min 
-x_min_derive = data_derive.index(min(data_derive))
-print("2nd point d'inflexion (recuperation) :", data_time[x_min_derive], "secondes")
+#affichage des traces
+plt.plot(data_time, data_smooth)
+plt.plot(data_time, vector_95FCmax)
+#plt.plot(data_time, data_raw)
+plt.axvline(x=intersection_point, color="red")
 
-# affichage des traces
-# Création des deux graphiques
-fig, axs = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+plt.grid()
 
+# Reduire les ticks sur l'axe x
+step = 50  # Espacement entre ticks
+plt.xticks(range(min(data_time), max(data_time) + 1, step))  # Ticks réguliers
+plt.yticks(range(int(min(data_measure)/10)*10, int((max(data_measure))/10)*10, 10))  # Ticks réguliers pour y (tous les 2)
 
-# Premier graphique : tableau initial
-axs[0].plot(data_time, data_smooth, marker='', color='black', label="Tableau initial", linewidth=2)
-axs[0].set_title("Fréquence cardiaque mesurée au capteur OH1", fontsize=16)
-axs[0].set_ylabel("FC", fontsize=14)
-axs[0].grid(True)
-#axs[0].axvline(x=x_max_derive, color="red", linestyle="--")
-#axs[0].axvline(x=x_min_derive, color="red", linestyle="--")
-
-# Deuxième graphique : tableau dérivé
-axs[1].plot(data_time, data_derive, marker='', color='red', label="Tableau dérivé", linewidth=2)
-axs[1].set_xlabel("Temps (s)", fontsize=14)
-axs[1].set_ylabel("Derivée de la FC", fontsize=14)
-axs[1].grid(True)
-#axs[1].axvline(x=x_max_derive, color="red", linestyle="--")
-#axs[1].axvline(x=x_min_derive, color="red", linestyle="--")
-
-# Ajustement de l'espacement
-plt.tight_layout()
-
-# Sauvegarder avec un fond transparent
-plt.savefig("FC_Kevin.png", transparent=True)
-
-plt.show()
