@@ -1,153 +1,117 @@
 import csv
+import os
+import re
+import math
+
 import matplotlib.pyplot as plt
 import numpy as np
-import math
 from scipy.signal import butter, filtfilt
-from datetime import datetime
 
-###############################################################################
-#                        FUNCTION DEFINITION
-###############################################################################
+# ------------------------------------------
+# Fonctions utilitaires
+# ------------------------------------------
 
 def butterworth_filter(data, cutoff, fs, order=5):
     nyquist = 0.5 * fs
     normal_cutoff = cutoff / nyquist
-    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    b, a = butter(order, normal_cutoff, btype='low')
     return filtfilt(b, a, data).tolist()
 
-
-def tableau_derive(tableau):
-    return np.diff(tableau).tolist() + [0]
-
-
-def find_elbow_point(x, y):
-    """Détection du point de coude basée sur la première dérivée et le changement le plus brusque."""
-    x, y = np.array(x), np.array(y)
-    y_diff = np.diff(y)  # Première dérivée
-
-    # Recherche de l'indice où la chute est la plus forte
-    elbow_index = np.argmin(y_diff)  # L'endroit où la pente devient la plus négative
-
-    return x[elbow_index]
+def tableau_derive(data):
+    return np.diff(data).tolist() + [0]
 
 def lissage_courbe(data, window_size):
     if window_size % 2 == 0:
         raise ValueError("La taille de la fenêtre doit être impaire.")
-        
-    smoothed_data = []
-    half_window = window_size // 2
-    
-    for i in range(len(data)):
-        # Gestion des bords : on ajuste la fenêtre
-        start = max(0, i - half_window)
-        end = min(len(data), i + half_window + 1)
-        window = data[start:end]
-        
-        # Moyenne des points dans la fenêtre
-        smoothed_data.append(sum(window) / len(window))
-    
-    return smoothed_data 
+    return [np.mean(data[max(0, i - window_size//2): min(len(data), i + window_size//2 + 1)]) for i in range(len(data))]
 
-# Fonction pour détecter le début de la récupération (descente de la FC)
+def find_elbow_point(x, y):
+    return x[np.argmin(np.diff(y))]
+
 def detect_recovery_start(data):
-    peak_idx = np.argmax(data)  # Index de la FC max
+    peak_idx = np.argmax(data)
     for i in range(peak_idx + 1, len(data)):
         if data[i] < data[peak_idx]:
-            return i  # Retourne l'index du début de la descente
-    return None  # Si pas trouvé
+            return i
+    return None
 
-###############################################################################
-#                            MAIN FUNCTION
-###############################################################################
+# ------------------------------------------
+# Chargement et pré-traitement des données
+# ------------------------------------------
 
-data_time, data_measure = [], []
+input_filename = 'LEGOFF_Guillaume_post_test_protocole_400m.csv'
 
-# Lecture des données depuis le fichier CSV
-#with open('Guillaume_pre_test_protocole.csv', mode='r', encoding='utf-8') as f:
-with open('sample_400m.csv', mode='r', encoding='utf-8') as f:
-    lecteur = csv.reader(f)
-    next(lecteur), next(lecteur), next(lecteur)  # Ignorer les trois premières lignes
-    
-    for row in lecteur:
+# Extraction des métadonnées depuis le nom de fichier
+basename = os.path.basename(input_filename).lower().replace(".csv", "")
+parts = re.split(r"[_\-]", basename)
+
+nom = parts[0].upper()
+prenom = parts[1].capitalize()
+prepost = next((p for p in parts if p in ['pre', 'post']), 'NA')
+distance = next((d for d in parts if d.endswith('m')), 'NA').replace('m', '')
+
+# Lecture du fichier CSV
+data_time, data_hr = [], []
+with open(input_filename, mode='r', encoding='utf-8') as f:
+    reader = csv.reader(f)
+    for _ in range(3): next(reader)
+    for row in reader:
         if row[1] and row[2]:
-            time_obj = datetime.strptime(row[1], "%H:%M:%S")
-            data_time.append(time_obj.hour * 3600 + time_obj.minute * 60 + time_obj.second)
-            data_measure.append(float(row[2]))
+            t = sum(x * int(v) for x, v in zip([3600, 60, 1], row[1].split(":")))
+            data_time.append(t)
+            data_hr.append(float(row[2]))
 
-# Lissage de la courbe
-fs = 100  # Fréquence d'échantillonnage hypothétique
-cutoff = 5  # Fréquence de coupure
+# Traitement du signal
+fs, cutoff = 100, 5
+hr_smooth = lissage_courbe(butterworth_filter(data_hr, cutoff, fs), 29)
+hr_derive = tableau_derive(hr_smooth)
 
-data_smooth = butterworth_filter(data_measure, cutoff, fs)
-data_smooth = lissage_courbe(data_smooth, 29)
+start_idx = np.argmax(hr_derive) - 30
+time_crop = [t - data_time[start_idx] for t in data_time[start_idx:]]
+hr_crop = hr_smooth[start_idx:]
 
-data_derive = tableau_derive(data_smooth)
+# Analyse points clés
+idx_fcmax = np.argmax(data_hr)
+t_fcmax = time_crop[idx_fcmax - start_idx]
+fcmax = int(data_hr[idx_fcmax])
 
-# Suppression du début inutile
-start = np.argmax(data_derive)-30
-stop = np.argmax(data_smooth)-start
-data_crop = data_smooth[start:]
-data_derive = tableau_derive(data_crop)
-data_derive = lissage_courbe(data_derive, 71)
+tknee = find_elbow_point(np.array(time_crop[:150]), hr_derive[start_idx:start_idx+150])
+fc_knee = int(hr_crop[tknee])
+angle = round(math.degrees(math.atan((fcmax - fc_knee) / (t_fcmax - tknee))), 2)
 
-data_derive_sec = tableau_derive(data_derive)
-# on recale le début du graphe sur le début de l'épreuve
-data_time = [x - data_time[start] for x in data_time[start:]]
+recovery_idx = detect_recovery_start(hr_crop)
+t_recovery = time_crop[recovery_idx]
+fc_recovery = int(hr_crop[recovery_idx])
+fc_180 = int(hr_crop[recovery_idx + 180]) if recovery_idx + 180 < len(hr_crop) else 'NA'
+t_180 = time_crop[recovery_idx + 180] if recovery_idx + 180 < len(time_crop) else 'NA'
 
-# Application de la méthode du coude pour identifier un point clé
-tps_values = np.array(data_time)
-fc_values = np.array(data_crop)
+# Sauvegarde CSV résumé
+output_csv = "resume_fc.csv"
+write_header = not os.path.exists(output_csv)
 
-#Recherche de la FCmax sur valeur brute
-# Trouver l'indice de la valeur maximale de y
-indice_FCmax = np.argmax(data_measure)
+with open(output_csv, mode='a', newline='', encoding='utf-8') as f:
+    writer = csv.writer(f)
+    if write_header:
+        writer.writerow(["Nom", "Prénom", "Pre/Post", "Distance", "FC_kneepoint", "t_kneepoint", "FC_max", "Angle_derive", "FC_180s"])
+    writer.writerow([nom, prenom, prepost, distance, fc_knee, tknee, fcmax, angle, fc_180])
 
-# Coordonnées du maximum
-tFCmax = data_time[indice_FCmax]
-FCmax = data_measure[indice_FCmax]
+# Affichage simple de la FC
+print("Knee point", tknee, "secondes")
+print("FC max", fcmax, "bpm")
+print("Angle derive", angle, "°")
+print("FC fin+180s", fc_180, "bpm")
 
-# Coordonnées du knee point
-tknee_point = find_elbow_point(tps_values[:150], data_derive[:150])
-FC_knee = data_crop[tknee_point]
+plt.figure(figsize=(10, 5))
+plt.plot(time_crop, hr_crop, label="FC lissée", color='black')
+plt.axvline(x=tknee, color='blue', linestyle='--', label="Knee Point")
+plt.axvline(x=t_fcmax, color='orange', linestyle='--', label="FC Max")
+plt.axvline(x=t_recovery, color='green', linestyle='--', label="Début récup")
 
-#calcul angle derive cardiaque
-angle = math.atan((FCmax-FC_knee) / (tFCmax - tknee_point)) #arctan((FCmax - FCknee) / (t_FCmax-T_Knee))
-angle = np.degrees(angle)
-
-# FC @fin de test +180s
-# Debut de la phase de récup ...
-recovery_start_idx = detect_recovery_start(data_crop)
-
-# ... FC 180s après
-FC_recup = data_crop[recovery_start_idx+180]
-
-
-# Affichage des résultats
-print("\tFCmax :", int(FCmax), "bpm")
-print("\tt_Knee Point :", tknee_point, "secondes (Méthode du Coude)")
-print("\tangle : ", round(angle, 2), "°")
-
-print("\tFC 180s après arrêt :", int(FC_recup), "bpm")
-
-# Affichage des graphiques
-fig, axs = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
-
-axs[0].plot(data_time, data_crop, color='black', linewidth=2)
-axs[0].set_title("Fréquence cardiaque mesurée au capteur OH1")
-axs[0].set_ylabel("FC")
-axs[0].grid(True)
-
-# Affichage du knee point
-axs[0].axvline(x=tknee_point, color='blue', linestyle='--', label="Knee Point")
-axs[0].axvline(x=stop, color='blue', linestyle='--', label="Fc max")
-
-axs[0].legend()
-
-axs[1].plot(data_time, data_derive, color='red', linewidth=2)
-axs[1].set_xlabel("Temps (s)")
-axs[1].set_ylabel("Dérivée de la FC")
-axs[1].grid(True)
-
+plt.title("Évolution de la fréquence cardiaque")
+plt.xlabel("Temps (s)")
+plt.ylabel("FC (bpm)")
+plt.grid(True)
+plt.legend()
 plt.tight_layout()
-plt.savefig("FC_Kevin.png", transparent=True)
+plt.savefig("courbe_FC.png")
 plt.show()
