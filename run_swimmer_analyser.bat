@@ -1,4 +1,6 @@
 @echo off
+setlocal ENABLEDELAYEDEXPANSION
+
 set SOURCE_DIR=SOURCE_CSV
 set SCRIPT=calcul_courbe.py
 
@@ -11,7 +13,7 @@ for %%f in ("%SOURCE_DIR%\*.csv") do (
 )
 
 rem Si aucun fichier n'est trouvé
-if "%COUNT%"=="0" (
+if "!COUNT!"=="0" (
     echo Aucun fichier CSV dans %SOURCE_DIR%.
     pause
     exit /b
@@ -22,7 +24,7 @@ set /a CURRENT=1
 
 rem Parcourir tous les fichiers CSV dans SOURCE_CSV
 for %%f in ("%SOURCE_DIR%\*.csv") do (
-    echo Traitement du fichier %CURRENT%/%COUNT% : %%~nxf
+    echo Traitement du fichier !CURRENT!/!COUNT! : %%~nxf
     python "%SCRIPT%" "%%f"
     set /a CURRENT+=1
 )

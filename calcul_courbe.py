@@ -7,7 +7,6 @@ import sys
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import butter, filtfilt
-from datetime import datetime
 
 # ------------------------------------------
 # Fonctions utilitaires
@@ -30,42 +29,42 @@ def lissage_courbe(data, window_size):
 def find_elbow_point(x, y):
     return x[np.argmin(np.diff(y))]
 
-def detect_recovery_start(data):
-    peak_idx = np.argmax(data)
-    for i in range(peak_idx + 1, len(data)):
-        if data[i] < data[peak_idx]:
-            return i
-    return None
-
-def detect_effort_start(data):
+def detect_recovery_start(data, window=5, drop_threshold=1):
     """
-    Détecte le début de l'effort en trouvant le premier point où la FC augmente nettement.
-    Retourne l'index correspondant.
-    """
-    baseline = np.median(data[:30])  # moyenne/valeur de repos au début
-    seuil = baseline + 5  # seuil arbitraire (ex: +5 bpm au-dessus du repos)
-
-    for i in range(30, len(data)):
-        if data[i] > seuil:
-            return i
-    return None
-
-def detect_effort_start_by_derivative(data, threshold=0.5, window=5):
-    """
-    Détecte le début de l'effort en cherchant la première pente (dérivée) suffisamment forte.
+    Détecte le début de la récupération en cherchant une baisse stable de la FC après le pic.
     
     :param data: liste des FC (lissées)
-    :param threshold: pente minimale indicative pour considérer que la montée commence
-    :param window: taille de la fenêtre moyenne pour lisser la dérivée
-    :return: index du début de montée ou None
+    :param window: nombre de points pour vérifier une baisse continue
+    :param drop_threshold: seuil minimal de baisse sur la fenêtre
+    :return: index du début de la récupération ou None
     """
-    deriv = tableau_derive(data)
-    deriv_smooth = lissage_courbe(deriv, window)
-
-    for i in range(len(deriv_smooth)):
-        if deriv_smooth[i] >= threshold:
+    peak_idx = np.argmax(data)
+    
+    for i in range(peak_idx + 1, len(data) - window):
+        start = data[i]
+        end = data[i + window]
+        if start - end >= drop_threshold:
             return i
     return None
+
+
+
+def detect_true_effort_start(data, window=5, rise_threshold=4):
+    """
+    Détecte le début effectif du test en trouvant une montée significative et durable de la FC.
+
+    :param data: liste des FC (lissées)
+    :param window: nombre de points à comparer pour observer une montée
+    :param rise_threshold: augmentation minimale de FC sur cette fenêtre
+    :return: index du début de l'effort ou None
+    """
+    for i in range(len(data) - window):
+        start = data[i]
+        end = data[i + window]
+        if end - start >= rise_threshold:
+            return i-window
+    return None
+
 
 def find_point_after_recovery_at_bpm(target_bpm, hr_data, time_data, recovery_idx):
     """
@@ -81,6 +80,22 @@ def find_point_after_recovery_at_bpm(target_bpm, hr_data, time_data, recovery_id
         if hr_data[i] <= target_bpm:
             return time_data[i], hr_data[i]
     return None
+
+def find_knee_by_derivative_drop(deriv, threshold_drop=1.5, window=5):
+    """
+    Détecte le knee point comme le moment où la dérivée chute significativement.
+    :param deriv: liste des dérivées
+    :param threshold_drop: différence minimale entre la pente locale et la suivante
+    :param window: fenêtre pour moyenne lissée
+    :return: index du knee point
+    """
+    smoothed = lissage_courbe(deriv, window)
+    for i in range(1, len(smoothed) - window):
+        delta = smoothed[i] - smoothed[i + 1]
+        if delta > threshold_drop:
+            return i
+    return int(np.argmax(deriv))  # fallback
+
 
 
 # ------------------------------------------
@@ -119,14 +134,14 @@ hr_smooth = lissage_courbe(butterworth_filter(data_hr, cutoff, fs), 29)
 hr_derive = tableau_derive(hr_smooth)
 
 
-OFFSET = 60
+OFFSET = 90
 start_idx = np.argmax(hr_derive) - OFFSET #derivee maximale
 t_derive_max = start_idx + OFFSET
 fc_derive_max = int(hr_derive[start_idx])
 time_crop = [t - data_time[start_idx] for t in data_time[start_idx:]]
 hr_crop = hr_smooth[start_idx:]
 
-effort_start_idx = detect_effort_start_by_derivative(hr_crop)
+effort_start_idx = detect_true_effort_start(hr_crop)
 if effort_start_idx is not None:
     t_effort_start = time_crop[effort_start_idx]
     fc_effort_start = int(hr_crop[effort_start_idx])
@@ -140,6 +155,7 @@ fcmax = int(data_hr[idx_fcmax])
 # Coordonnes Knee point
 tknee = find_elbow_point(np.array(time_crop[:150]), hr_derive[start_idx:start_idx+150])
 fc_knee = int(hr_crop[tknee])
+
 
 # Calcul composante rapide
 t_compo_rapide = tknee - t_effort_start
@@ -171,9 +187,8 @@ output_dir = "OUTPUT"
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)  # Crée le dossier OUTPUT
 
-now = datetime.now() #date et heure actuelle
-date_time = now.strftime("%Y%m%d_%H%M%S")  # Exemple : 20250501_075432
-output_csv = os.path.join(output_dir, f"resume_fc_{date_time}.csv")
+output_csv = os.path.join(output_dir, "resume_fc.csv")
+write_header = not os.path.exists(output_csv)
 write_header = not os.path.exists(output_csv)
 
 with open(output_csv, mode='a', newline='', encoding='utf-8') as f:
