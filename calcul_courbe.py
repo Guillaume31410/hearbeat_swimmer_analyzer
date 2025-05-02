@@ -63,7 +63,7 @@ def detect_true_effort_start(data, window=5, rise_threshold=4):
         end = data[i + window]
         if end - start >= rise_threshold:
             return i-window
-    return None
+    return 0
 
 
 def find_point_after_recovery_at_bpm(target_bpm, hr_data, time_data, recovery_idx):
@@ -136,15 +136,23 @@ hr_derive = tableau_derive(hr_smooth)
 
 OFFSET = 90
 start_idx = np.argmax(hr_derive) - OFFSET #derivee maximale
-t_derive_max = start_idx + OFFSET
+if start_idx < 0 : 
+    start_idx = 0
+    t_derive_max = start_idx
+else:
+    t_derive_max = start_idx + OFFSET
+    
 fc_derive_max = int(hr_derive[start_idx])
 time_crop = [t - data_time[start_idx] for t in data_time[start_idx:]]
 hr_crop = hr_smooth[start_idx:]
 
 effort_start_idx = detect_true_effort_start(hr_crop)
-if effort_start_idx is not None:
+if effort_start_idx != 0:
     t_effort_start = time_crop[effort_start_idx]
     fc_effort_start = int(hr_crop[effort_start_idx])
+else:
+    t_effort_start = time_crop[0]
+    fc_effort_start = int(hr_crop[0])
 
 ############ Analyse points clés ############
 # Coordonées FC max
@@ -173,13 +181,17 @@ fc_180 = int(hr_crop[recovery_idx + 180]) if recovery_idx + 180 < len(hr_crop) e
 t_180 = time_crop[recovery_idx + 180] if recovery_idx + 180 < len(time_crop) else 'NA'
 
 # Coordonnée 130 bpm (après point de récupération)
-result_130 = find_point_after_recovery_at_bpm(130, hr_crop, time_crop, recovery_idx)
+idx_fcmin_after = np.argmin(hr_crop[recovery_idx:])
+t_fcmin_after = time_crop[idx_fcmin_after]
+fc_min_after_test = int(data_hr[idx_fcmin_after])
+fc_med = (fc_min_after_test + fc_recovery)/2
+
+result_130 = find_point_after_recovery_at_bpm(fc_med, hr_crop, time_crop, recovery_idx)
 if result_130:
     t_130, fc_130 = result_130
     angle_recup = round(math.degrees(math.atan((t_130-t_recovery) / (fc_recovery - fc_130))), 2)
 else:
     t_130, fc_130, angle_recup = 'NA', 'NA', 'NA'
-
 
 ############ Sauvegarde ############
 # Sauvegarde CSV résumé
@@ -204,7 +216,8 @@ with open(output_csv, mode='a', newline='', encoding='utf-8') as f:
                         "Duree composante rapide",
                         "Angle derive cardiaque",
                         "Angle recuperation",
-                        "FC apres 180s"])
+                        "FC apres 180s", 
+                        "FC min apres test"])
     writer.writerow([
                     nom, 
                     prenom, 
@@ -215,7 +228,8 @@ with open(output_csv, mode='a', newline='', encoding='utf-8') as f:
                     t_compo_rapide,
                     angle, 
                     angle_recup, 
-                    fc_180])
+                    fc_180, 
+                    fc_min_after_test])
     
 # Affichage simple de la FC
 plt.figure(figsize=(10, 5))
