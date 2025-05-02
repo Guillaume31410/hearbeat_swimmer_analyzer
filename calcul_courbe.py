@@ -181,10 +181,12 @@ fc_180 = int(hr_crop[recovery_idx + 180]) if recovery_idx + 180 < len(hr_crop) e
 t_180 = time_crop[recovery_idx + 180] if recovery_idx + 180 < len(time_crop) else 'NA'
 
 # Coordonnée 130 bpm (après point de récupération)
-idx_fcmin_after = np.argmin(hr_crop[recovery_idx:])
+idx_fcmin_after = recovery_idx + np.argmin(hr_crop[recovery_idx:recovery_idx+180])
 t_fcmin_after = time_crop[idx_fcmin_after]
-fc_min_after_test = int(data_hr[idx_fcmin_after])
+fc_min_after_test = int(hr_crop[idx_fcmin_after])
 fc_med = (fc_min_after_test + fc_recovery)/2
+
+t_recup_complete = t_fcmin_after - t_recovery
 
 result_130 = find_point_after_recovery_at_bpm(fc_med, hr_crop, time_crop, recovery_idx)
 if result_130:
@@ -216,8 +218,8 @@ with open(output_csv, mode='a', newline='', encoding='utf-8') as f:
                         "Duree composante rapide",
                         "Angle derive cardiaque",
                         "Angle recuperation",
-                        "FC apres 180s", 
-                        "FC min apres test"])
+                        "FC min apres test",
+                        "Temps recup"])
     writer.writerow([
                     nom, 
                     prenom, 
@@ -228,8 +230,8 @@ with open(output_csv, mode='a', newline='', encoding='utf-8') as f:
                     t_compo_rapide,
                     angle, 
                     angle_recup, 
-                    fc_180, 
-                    fc_min_after_test])
+                    fc_min_after_test, 
+                    t_recup_complete])
     
 # Affichage simple de la FC
 plt.figure(figsize=(10, 5))
